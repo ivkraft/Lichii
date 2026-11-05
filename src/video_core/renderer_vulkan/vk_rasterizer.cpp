@@ -242,7 +242,7 @@ RasterizerVulkan::RasterizerVulkan(Core::Frontend::EmuWindow& emu_window_, Tegra
                      gpu.ShaderNotify()),
       accelerate_dma(buffer_cache, texture_cache, scheduler),
       fence_manager(*this, gpu, texture_cache, buffer_cache, query_cache, device, scheduler),
-      frame_dump(memory_allocator, scheduler), wfi_event(device.GetLogical().CreateEvent()) {
+      frame_dump(device, memory_allocator, scheduler), wfi_event(device.GetLogical().CreateEvent()) {
     scheduler.SetQueryCache(query_cache);
     VideoCommon::GpuSplit::Get().SetIdleHook(
         [](void* argument) { static_cast<Scheduler*>(argument)->FlushDeferred(); },
@@ -437,6 +437,15 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
     if (frame_dump.Capturing()) {
         FrameDumpPass(texture_cache.GetFramebuffer());
         frame_dump.NoteDraw(pipeline->ShaderHashes());
+        if (frame_dump.CapturingSampled()) {
+            boost::container::small_vector<FrameDump::Sampled, 16> sampled;
+            for (const auto& image : pipeline->SampledImages()) {
+                sampled.push_back({image.stage, image.tic, &texture_cache.GetImageView(image.id)});
+            }
+            if (frame_dump.NoteSampled(sampled)) {
+                scheduler.RequestRenderpass(texture_cache.GetFramebuffer());
+            }
+        }
     }
     if (VideoCommon::RenderTrace::SampleFrame(render_trace_frame) && render_trace_draws <= 2048) {
         LOG_DEBUG(Render_Vulkan,
@@ -910,7 +919,7 @@ void RasterizerVulkan::CaptureIndirectTrace() {
                               ? std::min<u64>(params.buffer_size,
                                               commands->SizeBytes() - command_offset)
                               : 0;
-    const u32 limit = params.is_byte_count ? 1 : std::min(max_draws, 8U);
+    const u32 limit = params.is_byte_count ? 1 : (std::min)(max_draws, 8U);
     for (u32 i = 0; i < limit; ++i) {
         if (available < command_bytes || (i && params.stride > (available - command_bytes) / i)) {
             break;
@@ -995,8 +1004,8 @@ void RasterizerVulkan::CollectIndirectTrace() {
                      trace.frame, trace.address, words[0]);
         } else {
             const u32 count = trace.include_count ? words[16] : trace.max_draws;
-            const u32 requested_draws = std::min(count, trace.max_draws);
-            const u32 sampled = std::min(requested_draws, trace.sampled_commands);
+            const u32 requested_draws = (std::min)(count, trace.max_draws);
+            const u32 sampled = (std::min)(requested_draws, trace.sampled_commands);
             u32 zero_commands{};
             std::string commands;
             for (u32 i = 0; i < sampled; ++i) {
@@ -2034,7 +2043,7 @@ void RasterizerVulkan::FlushWork() {
         static const u32 forced_draws = [] {
             const char* value = std::getenv("EDEN_NX2_FLUSH_DRAWS");
             return value != nullptr
-                       ? static_cast<u32>(std::max(32L, std::strtol(value, nullptr, 10)) & ~31L)
+                       ? static_cast<u32>((std::max)(32L, std::strtol(value, nullptr, 10)) & ~31L)
                        : 0U;
         }();
         legacy_budget = forced_draws != 0 ? forced_draws : (device.IsMoltenVK() ? 128U : 4096U);

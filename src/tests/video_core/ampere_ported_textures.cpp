@@ -47,8 +47,8 @@ TEST_CASE("Ampere per-tap gathers pass proven constant offsets to Maxwell TLD4.P
                 REQUIRE(lowered.required_texture_buffer == 14);
                 const u64 pred = u64{guard} << 16;
                 const std::array<u64, 9> expected{
-                    MoveImmediate(pred, 248, packed),
-                    MoveImmediate(pred, 249, 0x01000001),
+                    MoveImmediate(7ULL << 16, 248, packed),
+                    MoveImmediate(7ULL << 16, 249, 0x01000001),
                     Copy(pred, 250, 4),
                     Copy(pred, 251, 5),
                     0xc800000000000000ULL | pred | 250 | (250ULL << 8) | (248ULL << 20) |
